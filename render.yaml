@@ -11,3 +11,7 @@ services:
         sync: false
       - key: FRONTEND_URL
         value: https://starlit-pie-4e5b50.netlify.app
+      - key: VITE_SUPABASE_URL
+        value: https://tupjttqhkkjtlcvccjzj.supabase.co
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
