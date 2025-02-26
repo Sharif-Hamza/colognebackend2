@@ -8,36 +8,12 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Allow both localhost and production URLs
-const allowedOrigins = [
-  'http://localhost:5173',
-  'https://starlit-pie-4e5b50.netlify.app',
-  'https://*.preview.bolt.dev',
-  'https://*.stackblitz.io'
-];
-
+// Configure CORS
 app.use(cors({
-  origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Check if the origin matches any of our allowed patterns
-    const isAllowed = allowedOrigins.some(pattern => {
-      if (pattern.includes('*')) {
-        const regexPattern = pattern.replace(/\./g, '\\.').replace(/\*/g, '.*');
-        return new RegExp(regexPattern).test(origin);
-      }
-      return pattern === origin;
-    });
-    
-    if (!isAllowed) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
+  origin: process.env.FRONTEND_URL,
   methods: ['GET', 'POST'],
-  credentials: true
+  credentials: true,
+  allowedHeaders: ['Content-Type']
 }));
 
 // Parse JSON payloads
