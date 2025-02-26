@@ -8,12 +8,39 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-app.use(express.json());
+// Allow both localhost and Bolt preview URLs
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://*.preview.bolt.dev', // This will allow all Bolt preview URLs
+  'https://*.stackblitz.io'     // This will allow all StackBlitz preview URLs
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if the origin matches any of our allowed patterns
+    const isAllowed = allowedOrigins.some(pattern => {
+      if (pattern.includes('*')) {
+        const regexPattern = pattern.replace(/\./g, '\\.').replace(/\*/g, '.*');
+        return new RegExp(regexPattern).test(origin);
+      }
+      return pattern === origin;
+    });
+    
+    if (!isAllowed) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   methods: ['GET', 'POST'],
   credentials: true
 }));
+
+// Parse JSON payloads
+app.use(express.json());
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -32,6 +59,10 @@ app.post('/create-checkout-session', async (req, res) => {
   try {
     const { items, userId, email } = req.body;
 
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Invalid items data' });
+    }
+
     const lineItems = items.map(item => ({
       price_data: {
         currency: 'usd',
@@ -46,13 +77,16 @@ app.post('/create-checkout-session', async (req, res) => {
       quantity: item.quantity,
     }));
 
+    // Get the origin from the request headers
+    const origin = req.get('origin') || process.env.FRONTEND_URL;
+
     const session = await stripe.checkout.sessions.create({
       customer_email: email,
       payment_method_types: ['card'],
       line_items: lineItems,
       mode: 'payment',
-      success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/cart`,
+      success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/cart`,
       metadata: {
         userId
       }
