@@ -15,6 +15,18 @@ app.use(cors({
   credentials: true
 }));
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Cologne Ologist API',
+    status: 'running',
+    endpoints: [
+      '/create-checkout-session',
+      '/webhook'
+    ]
+  });
+});
+
 // Create checkout session
 app.post('/create-checkout-session', async (req, res) => {
   try {
