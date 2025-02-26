@@ -25,7 +25,13 @@ app.use(cors({
 }));
 
 // Parse JSON payloads
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    if (req.originalUrl === '/webhook') {
+      req.rawBody = buf.toString();
+    }
+  }
+}));
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -54,7 +60,7 @@ app.post('/create-checkout-session', async (req, res) => {
           images: [item.image_url],
           metadata: {
             productId: item.id,
-            image_url: item.image_url // Store image URL in metadata
+            image_url: item.image_url
           }
         },
         unit_amount: item.price,
@@ -140,7 +146,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
   try {
     event = stripe.webhooks.constructEvent(
-      req.body,
+      req.rawBody,
       sig,
       process.env.STRIPE_WEBHOOK_SECRET
     );
