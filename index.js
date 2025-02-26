@@ -8,23 +8,38 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// CORS configuration
+// Enhanced CORS configuration
 const corsOptions = {
   origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  methods: ['GET', 'POST', 'OPTIONS', 'HEAD', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  credentials: true,
+  maxAge: 86400 // Preflight results can be cached for 24 hours
 };
 
 // Apply CORS middleware
 app.use(cors(corsOptions));
+
+// Additional headers middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', process.env.FRONTEND_URL);
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD, PUT, PATCH, DELETE');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
 
 // Parse JSON payloads
 app.use(express.json());
 
 // Root endpoint
 app.get('/', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL);
   res.json({ 
     message: 'Cologne Ologist API',
     status: 'running',
@@ -34,9 +49,6 @@ app.get('/', (req, res) => {
 
 // Create checkout session
 app.post('/create-checkout-session', async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL);
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  
   try {
     const { items, userId, email } = req.body;
 
