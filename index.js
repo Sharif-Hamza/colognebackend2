@@ -8,24 +8,23 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Configure CORS with specific options
-app.use(cors({
+// CORS configuration
+const corsOptions = {
   origin: process.env.FRONTEND_URL,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  preflightContinue: false,
-  optionsSuccessStatus: 204
-}));
+  credentials: true
+};
 
-// Handle preflight requests
-app.options('*', cors());
+// Apply CORS middleware
+app.use(cors(corsOptions));
 
 // Parse JSON payloads
 app.use(express.json());
 
 // Root endpoint
 app.get('/', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL);
   res.json({ 
     message: 'Cologne Ologist API',
     status: 'running',
@@ -35,6 +34,9 @@ app.get('/', (req, res) => {
 
 // Create checkout session
 app.post('/create-checkout-session', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
   try {
     const { items, userId, email } = req.body;
 
