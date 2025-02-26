@@ -8,13 +8,21 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Configure CORS
-app.use(cors({
+// Configure CORS with more explicit options
+const corsOptions = {
   origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-  allowedHeaders: ['Content-Type']
-}));
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Handle OPTIONS requests explicitly
+app.options('*', cors(corsOptions));
 
 // Parse JSON payloads
 app.use(express.json());
@@ -115,4 +123,5 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 const port = process.env.PORT || 10000;
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
+  console.log(`CORS enabled for origin: ${process.env.FRONTEND_URL}`);
 });
