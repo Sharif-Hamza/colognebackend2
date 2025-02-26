@@ -25,7 +25,7 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'Cologne Ologist API',
     status: 'running',
-    endpoints: ['/create-checkout-session', '/webhook']
+    endpoints: ['/create-checkout-session', '/checkout-session/:sessionId', '/webhook']
   });
 });
 
@@ -54,15 +54,23 @@ app.post('/create-checkout-session', async (req, res) => {
       quantity: item.quantity,
     }));
 
+    // Ensure the URL doesn't have double slashes
+    const baseUrl = process.env.FRONTEND_URL.replace(/\/+$/, '');
+    
     const session = await stripe.checkout.sessions.create({
       customer_email: email,
       payment_method_types: ['card'],
       line_items: lineItems,
       mode: 'payment',
-      success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/cart`,
+      success_url: `${baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/cart`,
       metadata: {
         userId
+      },
+      allow_promotion_codes: true,
+      billing_address_collection: 'required',
+      shipping_address_collection: {
+        allowed_countries: ['US']
       }
     });
 
@@ -72,6 +80,32 @@ app.post('/create-checkout-session', async (req, res) => {
     res.status(500).json({ 
       message: error.message || 'An error occurred while creating the checkout session'
     });
+  }
+});
+
+// Retrieve session details
+app.get('/checkout-session/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ['line_items', 'customer_details']
+    });
+
+    res.json({
+      customer: {
+        name: session.customer_details?.name || 'N/A',
+        email: session.customer_details?.email || 'N/A'
+      },
+      items: session.line_items?.data.map(item => ({
+        description: item.description,
+        quantity: item.quantity,
+        amount_total: item.amount_total
+      })) || [],
+      total: session.amount_total
+    });
+  } catch (error) {
+    console.error('Error retrieving session:', error);
+    res.status(500).json({ message: 'Failed to retrieve order details' });
   }
 });
 
@@ -95,6 +129,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     const session = event.data.object;
     try {
       console.log('Payment successful for session:', session.id);
+      // Here you would typically:
+      // 1. Update order status in your database
+      // 2. Send confirmation email
+      // 3. Update inventory
+      // 4. Any other post-purchase operations
     } catch (error) {
       console.error('Error processing successful payment:', error);
       return res.status(500).json({ message: 'Error processing payment success' });
