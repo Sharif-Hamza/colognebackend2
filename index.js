@@ -3,6 +3,7 @@ import cors from 'cors';
 import Stripe from 'stripe';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 
 dotenv.config();
 
@@ -68,6 +69,9 @@ app.post('/create-checkout-session', async (req, res) => {
       quantity: item.quantity,
     }));
 
+    // Generate a UUID for the order
+    const orderId = randomUUID();
+
     // Ensure the URL doesn't have double slashes
     const baseUrl = process.env.FRONTEND_URL.replace(/\/+$/, '');
     
@@ -79,7 +83,8 @@ app.post('/create-checkout-session', async (req, res) => {
       success_url: `${baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}/cart`,
       metadata: {
-        userId
+        userId,
+        orderId // Store our UUID in the metadata
       },
       allow_promotion_codes: true,
       billing_address_collection: 'required',
@@ -163,51 +168,32 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         expand: ['line_items.data.price.product']
       });
 
-      // Get product details from Supabase
-      const productIds = expandedSession.line_items.data.map(item => 
-        item.price.product.metadata.productId
-      );
-
-      const { data: products } = await supabase
-        .from('products')
-        .select('id, image_url')
-        .in('id', productIds);
-
-      const productMap = products.reduce((acc, product) => {
-        acc[product.id] = product;
-        return acc;
-      }, {});
-
-      // Create the order
-      const { data: order, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          id: session.id,
-          user_id: session.metadata.userId,
-          status: 'completed',
-          total: session.amount_total,
-        })
-        .select()
-        .single();
-
-      if (orderError) throw orderError;
-
-      // Create order items with product details
+      // Prepare order items data
       const orderItems = expandedSession.line_items.data.map(item => ({
-        order_id: order.id,
         product_id: item.price.product.metadata.productId,
         quantity: item.quantity,
         price_at_time: item.price.unit_amount,
-        image_url: productMap[item.price.product.metadata.productId]?.image_url
+        image_url: item.price.product.metadata.image_url
       }));
 
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(orderItems);
+      // Call the database function to process the webhook
+      const { error } = await supabase.rpc('process_stripe_webhook', {
+        session_id: session.id,
+        user_id: session.metadata.userId,
+        order_id: session.metadata.orderId,
+        total: session.amount_total,
+        items: orderItems
+      });
 
-      if (itemsError) throw itemsError;
+      if (error) {
+        console.error('Error processing webhook:', error);
+        throw error;
+      }
 
-      console.log('Order and items created successfully');
+      console.log('Order processed successfully:', {
+        orderId: session.metadata.orderId,
+        sessionId: session.id
+      });
     } catch (error) {
       console.error('Error processing successful payment:', error);
       return res.status(500).json({ message: 'Error processing payment success' });
