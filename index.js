@@ -9,20 +9,13 @@ const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Configure CORS with specific options
-const corsOptions = {
+app.use(cors({
   origin: process.env.FRONTEND_URL,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-  preflightContinue: false,
-  optionsSuccessStatus: 204
-};
-
-// Apply CORS middleware with options
-app.use(cors(corsOptions));
-
-// Handle preflight requests explicitly
-app.options('*', cors(corsOptions));
+  maxAge: 86400 // Cache preflight request for 24 hours
+}));
 
 // Parse JSON payloads
 app.use(express.json());
