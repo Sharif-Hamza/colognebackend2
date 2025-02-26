@@ -8,13 +8,21 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// More permissive CORS configuration
-app.use(cors({
-  origin: true, // Allow all origins
-  credentials: true,
+// Configure CORS with specific options
+const corsOptions = {
+  origin: process.env.FRONTEND_URL,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept'],
-}));
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+// Apply CORS middleware with options
+app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
 
 // Parse JSON payloads
 app.use(express.json());
@@ -30,11 +38,6 @@ app.get('/', (req, res) => {
 
 // Create checkout session
 app.post('/create-checkout-session', async (req, res) => {
-  // Set CORS headers explicitly for this endpoint
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-
   try {
     const { items, userId, email } = req.body;
 
@@ -109,5 +112,5 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 const port = process.env.PORT || 10000;
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-  console.log('CORS enabled for all origins');
+  console.log(`CORS enabled for origin: ${process.env.FRONTEND_URL}`);
 });
