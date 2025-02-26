@@ -2,11 +2,18 @@ import express from 'express';
 import cors from 'cors';
 import Stripe from 'stripe';
 import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.VITE_SUPABASE_URL,
+  process.env.VITE_SUPABASE_ANON_KEY
+);
 
 // Configure CORS with specific options
 app.use(cors({
@@ -46,7 +53,8 @@ app.post('/create-checkout-session', async (req, res) => {
           description: item.description,
           images: [item.image_url],
           metadata: {
-            productId: item.id
+            productId: item.id,
+            image_url: item.image_url // Store image URL in metadata
           }
         },
         unit_amount: item.price,
@@ -88,8 +96,23 @@ app.get('/checkout-session/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ['line_items', 'customer_details']
+      expand: ['line_items.data.price.product', 'customer_details', 'payment_intent']
     });
+
+    // Get product details from Supabase for each line item
+    const productIds = session.line_items.data.map(item => 
+      item.price.product.metadata.productId
+    );
+
+    const { data: products } = await supabase
+      .from('products')
+      .select('id, image_url')
+      .in('id', productIds);
+
+    const productMap = products.reduce((acc, product) => {
+      acc[product.id] = product;
+      return acc;
+    }, {});
 
     res.json({
       customer: {
@@ -99,7 +122,8 @@ app.get('/checkout-session/:sessionId', async (req, res) => {
       items: session.line_items?.data.map(item => ({
         description: item.description,
         quantity: item.quantity,
-        amount_total: item.amount_total
+        amount_total: item.amount_total,
+        image_url: productMap[item.price.product.metadata.productId]?.image_url
       })) || [],
       total: session.amount_total
     });
@@ -128,12 +152,56 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
     try {
-      console.log('Payment successful for session:', session.id);
-      // Here you would typically:
-      // 1. Update order status in your database
-      // 2. Send confirmation email
-      // 3. Update inventory
-      // 4. Any other post-purchase operations
+      // Retrieve the session with line items
+      const expandedSession = await stripe.checkout.sessions.retrieve(session.id, {
+        expand: ['line_items.data.price.product']
+      });
+
+      // Get product details from Supabase
+      const productIds = expandedSession.line_items.data.map(item => 
+        item.price.product.metadata.productId
+      );
+
+      const { data: products } = await supabase
+        .from('products')
+        .select('id, image_url')
+        .in('id', productIds);
+
+      const productMap = products.reduce((acc, product) => {
+        acc[product.id] = product;
+        return acc;
+      }, {});
+
+      // Create the order
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .insert({
+          id: session.id,
+          user_id: session.metadata.userId,
+          status: 'completed',
+          total: session.amount_total,
+        })
+        .select()
+        .single();
+
+      if (orderError) throw orderError;
+
+      // Create order items with product details
+      const orderItems = expandedSession.line_items.data.map(item => ({
+        order_id: order.id,
+        product_id: item.price.product.metadata.productId,
+        quantity: item.quantity,
+        price_at_time: item.price.unit_amount,
+        image_url: productMap[item.price.product.metadata.productId]?.image_url
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('order_items')
+        .insert(orderItems);
+
+      if (itemsError) throw itemsError;
+
+      console.log('Order and items created successfully');
     } catch (error) {
       console.error('Error processing successful payment:', error);
       return res.status(500).json({ message: 'Error processing payment success' });
