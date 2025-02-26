@@ -8,32 +8,13 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Enhanced CORS configuration
-const corsOptions = {
-  origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST', 'OPTIONS', 'HEAD', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept', 'X-Requested-With'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+// More permissive CORS configuration
+app.use(cors({
+  origin: true, // Allow all origins
   credentials: true,
-  maxAge: 86400 // Preflight results can be cached for 24 hours
-};
-
-// Apply CORS middleware
-app.use(cors(corsOptions));
-
-// Additional headers middleware
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', process.env.FRONTEND_URL);
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD, PUT, PATCH, DELETE');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  
-  // Handle preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  next();
-});
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept'],
+}));
 
 // Parse JSON payloads
 app.use(express.json());
@@ -49,6 +30,11 @@ app.get('/', (req, res) => {
 
 // Create checkout session
 app.post('/create-checkout-session', async (req, res) => {
+  // Set CORS headers explicitly for this endpoint
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
   try {
     const { items, userId, email } = req.body;
 
@@ -123,5 +109,5 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 const port = process.env.PORT || 10000;
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-  console.log(`CORS enabled for origin: ${process.env.FRONTEND_URL}`);
+  console.log('CORS enabled for all origins');
 });
