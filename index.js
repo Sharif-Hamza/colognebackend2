@@ -84,7 +84,7 @@ app.post('/create-checkout-session', async (req, res) => {
       cancel_url: `${baseUrl}/cart`,
       metadata: {
         userId,
-        orderId // Store our UUID in the metadata
+        orderId
       },
       allow_promotion_codes: true,
       billing_address_collection: 'required',
@@ -110,21 +110,6 @@ app.get('/checkout-session/:sessionId', async (req, res) => {
       expand: ['line_items.data.price.product', 'customer_details', 'payment_intent']
     });
 
-    // Get product details from Supabase for each line item
-    const productIds = session.line_items.data.map(item => 
-      item.price.product.metadata.productId
-    );
-
-    const { data: products } = await supabase
-      .from('products')
-      .select('id, image_url')
-      .in('id', productIds);
-
-    const productMap = products.reduce((acc, product) => {
-      acc[product.id] = product;
-      return acc;
-    }, {});
-
     res.json({
       customer: {
         name: session.customer_details?.name || 'N/A',
@@ -134,7 +119,7 @@ app.get('/checkout-session/:sessionId', async (req, res) => {
         description: item.description,
         quantity: item.quantity,
         amount_total: item.amount_total,
-        image_url: productMap[item.price.product.metadata.productId]?.image_url
+        image_url: item.price.product.metadata.image_url
       })) || [],
       total: session.amount_total
     });
