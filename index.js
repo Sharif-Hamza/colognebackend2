@@ -8,13 +8,18 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Apply CORS middleware with all origins during development
+// Configure CORS with specific options
 app.use(cors({
-  origin: true, // Allow all origins
-  credentials: true,
+  origin: process.env.FRONTEND_URL,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
+
+// Handle preflight requests
+app.options('*', cors());
 
 // Parse JSON payloads
 app.use(express.json());
@@ -24,10 +29,7 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'Cologne Ologist API',
     status: 'running',
-    endpoints: [
-      '/create-checkout-session',
-      '/webhook'
-    ]
+    endpoints: ['/create-checkout-session', '/webhook']
   });
 });
 
@@ -49,7 +51,7 @@ app.post('/create-checkout-session', async (req, res) => {
             productId: item.id
           }
         },
-        unit_amount: item.price, // Price should already be in cents
+        unit_amount: item.price,
       },
       quantity: item.quantity,
     }));
@@ -91,17 +93,9 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Handle successful payments
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
-    
     try {
-      // Here you would typically:
-      // 1. Create an order in your database
-      // 2. Update product inventory
-      // 3. Send confirmation email
-      // 4. Update any other relevant data
-      
       console.log('Payment successful for session:', session.id);
     } catch (error) {
       console.error('Error processing successful payment:', error);
@@ -115,5 +109,5 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 const port = process.env.PORT || 10000;
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-  console.log('CORS enabled for all origins');
+  console.log(`CORS enabled for origin: ${process.env.FRONTEND_URL}`);
 });
