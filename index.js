@@ -8,11 +8,12 @@ dotenv.config();
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Allow both localhost and Bolt preview URLs
+// Allow both localhost and production URLs
 const allowedOrigins = [
   'http://localhost:5173',
-  'https://*.preview.bolt.dev', // This will allow all Bolt preview URLs
-  'https://*.stackblitz.io'     // This will allow all StackBlitz preview URLs
+  'https://starlit-pie-4e5b50.netlify.app',
+  'https://*.preview.bolt.dev',
+  'https://*.stackblitz.io'
 ];
 
 app.use(cors({
@@ -77,16 +78,13 @@ app.post('/create-checkout-session', async (req, res) => {
       quantity: item.quantity,
     }));
 
-    // Get the origin from the request headers
-    const origin = req.get('origin') || process.env.FRONTEND_URL;
-
     const session = await stripe.checkout.sessions.create({
       customer_email: email,
       payment_method_types: ['card'],
       line_items: lineItems,
       mode: 'payment',
-      success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/cart`,
+      success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/cart`,
       metadata: {
         userId
       }
