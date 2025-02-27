@@ -46,7 +46,7 @@ app.get('/', (req, res) => {
 // Create checkout session
 app.post('/create-checkout-session', async (req, res) => {
   try {
-    const { items, userId, email } = req.body;
+    const { items, userId, email, shippingOption } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: 'Invalid items data' });
@@ -75,6 +75,50 @@ app.post('/create-checkout-session', async (req, res) => {
     // Ensure the URL doesn't have double slashes
     const baseUrl = process.env.FRONTEND_URL.replace(/\/+$/, '');
     
+    // Define shipping options
+    const shippingOptions = [
+      {
+        shipping_rate_data: {
+          type: 'fixed_amount',
+          fixed_amount: {
+            amount: 499,
+            currency: 'usd',
+          },
+          display_name: 'Standard Shipping',
+          delivery_estimate: {
+            minimum: {
+              unit: 'business_day',
+              value: 5,
+            },
+            maximum: {
+              unit: 'business_day',
+              value: 7,
+            },
+          },
+        },
+      },
+      {
+        shipping_rate_data: {
+          type: 'fixed_amount',
+          fixed_amount: {
+            amount: 999,
+            currency: 'usd',
+          },
+          display_name: 'Express Shipping',
+          delivery_estimate: {
+            minimum: {
+              unit: 'business_day',
+              value: 2,
+            },
+            maximum: {
+              unit: 'business_day',
+              value: 3,
+            },
+          },
+        },
+      },
+    ];
+    
     const session = await stripe.checkout.sessions.create({
       customer_email: email,
       payment_method_types: ['card'],
@@ -90,6 +134,13 @@ app.post('/create-checkout-session', async (req, res) => {
       billing_address_collection: 'required',
       shipping_address_collection: {
         allowed_countries: ['US']
+      },
+      shipping_options: shippingOptions,
+      automatic_tax: {
+        enabled: true,
+      },
+      tax_id_collection: {
+        enabled: true,
       }
     });
 
@@ -107,7 +158,7 @@ app.get('/checkout-session/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ['line_items.data.price.product', 'customer_details', 'payment_intent']
+      expand: ['line_items.data.price.product', 'customer_details', 'payment_intent', 'shipping_cost', 'total_details']
     });
 
     res.json({
@@ -121,7 +172,15 @@ app.get('/checkout-session/:sessionId', async (req, res) => {
         amount_total: item.amount_total,
         image_url: item.price.product.metadata.image_url
       })) || [],
-      total: session.amount_total
+      total: session.amount_total,
+      shipping: {
+        cost: session.shipping_cost?.amount_total || 0,
+        name: session.shipping_cost?.shipping_rate?.display_name || 'Standard Shipping'
+      },
+      tax: {
+        amount: session.total_details?.amount_tax || 0
+      },
+      subtotal: session.total_details?.amount_subtotal || 0
     });
   } catch (error) {
     console.error('Error retrieving session:', error);
@@ -150,7 +209,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     try {
       // Retrieve the session with line items
       const expandedSession = await stripe.checkout.sessions.retrieve(session.id, {
-        expand: ['line_items.data.price.product']
+        expand: ['line_items.data.price.product', 'shipping_cost', 'total_details']
       });
 
       // Prepare order items data
@@ -161,13 +220,21 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         image_url: item.price.product.metadata.image_url
       }));
 
+      // Extract shipping and tax information
+      const shippingCost = expandedSession.shipping_cost?.amount_total || 0;
+      const shippingName = expandedSession.shipping_cost?.shipping_rate?.display_name || 'Standard Shipping';
+      const taxAmount = expandedSession.total_details?.amount_tax || 0;
+
       // Call the database function to process the webhook
       const { error } = await supabase.rpc('process_stripe_webhook', {
         session_id: session.id,
         user_id: session.metadata.userId,
         order_id: session.metadata.orderId,
         total: session.amount_total,
-        items: orderItems
+        items: orderItems,
+        shipping_cost: shippingCost,
+        shipping_name: shippingName,
+        tax_amount: taxAmount
       });
 
       if (error) {
