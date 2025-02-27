@@ -119,16 +119,40 @@ app.post('/create-checkout-session', async (req, res) => {
       },
     ];
     
+    // Calculate subtotal
+    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    // Calculate tax (8.875% for NY)
+    const taxRate = 0.08875;
+    const taxAmount = Math.round(subtotal * taxRate);
+    
+    // Create a tax line item
+    const taxLineItem = {
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: 'Sales Tax (8.875%)',
+          description: 'NY State and Local Sales Tax',
+        },
+        unit_amount: taxAmount,
+      },
+      quantity: 1,
+    };
+    
+    // Add tax to line items
+    const allLineItems = [...lineItems, taxLineItem];
+    
     const session = await stripe.checkout.sessions.create({
       customer_email: email,
       payment_method_types: ['card'],
-      line_items: lineItems,
+      line_items: allLineItems,
       mode: 'payment',
       success_url: `${baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}/cart`,
       metadata: {
         userId,
-        orderId
+        orderId,
+        taxAmount
       },
       allow_promotion_codes: true,
       billing_address_collection: 'required',
@@ -136,8 +160,9 @@ app.post('/create-checkout-session', async (req, res) => {
         allowed_countries: ['US']
       },
       shipping_options: shippingOptions,
+      // Disable automatic tax since we're calculating it manually
       automatic_tax: {
-        enabled: true,
+        enabled: false,
       },
       tax_id_collection: {
         enabled: true,
@@ -178,7 +203,7 @@ app.get('/checkout-session/:sessionId', async (req, res) => {
         name: session.shipping_cost?.shipping_rate?.display_name || 'Standard Shipping'
       },
       tax: {
-        amount: session.total_details?.amount_tax || 0
+        amount: session.metadata?.taxAmount || 0
       },
       subtotal: session.total_details?.amount_subtotal || 0
     });
@@ -213,17 +238,19 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       });
 
       // Prepare order items data
-      const orderItems = expandedSession.line_items.data.map(item => ({
-        product_id: item.price.product.metadata.productId,
-        quantity: item.quantity,
-        price_at_time: item.price.unit_amount,
-        image_url: item.price.product.metadata.image_url
-      }));
+      const orderItems = expandedSession.line_items.data
+        .filter(item => item.price.product.metadata.productId) // Filter out tax line item
+        .map(item => ({
+          product_id: item.price.product.metadata.productId,
+          quantity: item.quantity,
+          price_at_time: item.price.unit_amount,
+          image_url: item.price.product.metadata.image_url
+        }));
 
       // Extract shipping and tax information
       const shippingCost = expandedSession.shipping_cost?.amount_total || 0;
       const shippingName = expandedSession.shipping_cost?.shipping_rate?.display_name || 'Standard Shipping';
-      const taxAmount = expandedSession.total_details?.amount_tax || 0;
+      const taxAmount = parseInt(session.metadata.taxAmount) || 0;
 
       // Call the database function to process the webhook
       const { error } = await supabase.rpc('process_stripe_webhook', {
