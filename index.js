@@ -137,6 +137,7 @@ app.post('/create-checkout-session', async (req, res) => {
     let couponId = null;
     let couponCode = null;
     let skipShipping = false;
+    let skipTax = false;
     
     // Apply coupon if provided
     if (coupon) {
@@ -144,18 +145,25 @@ app.post('/create-checkout-session', async (req, res) => {
       couponCode = coupon.code;
       
       // Handle different discount types
-      if (coupon.discount_type === 'fixed') {
+      if (coupon.discount_type === 'fixed_amount') {
         discountAmount = Math.min(coupon.discount_value, subtotal);
       } else if (coupon.discount_type === 'percentage') {
         discountAmount = Math.round((coupon.discount_value / 100) * subtotal);
-      } else if (coupon.discount_type === 'shipping_tax') {
-        // For shipping_tax type, we skip tax and shipping
+      } else if (coupon.discount_type === 'free_shipping') {
+        // For free_shipping type, we skip shipping
         skipShipping = true;
+      } else if (coupon.discount_type === 'no_tax') {
+        // For no_tax type, we skip tax
+        skipTax = true;
+      } else if (coupon.discount_type === 'full_discount') {
+        // For full_discount type, we skip both tax and shipping
+        skipShipping = true;
+        skipTax = true;
       }
     }
     
-    // Calculate tax (8.875% for NY) if not using a shipping_tax coupon
-    if (!skipShipping) {
+    // Calculate tax (8.875% for NY) if not using a tax-exemption coupon
+    if (!skipTax) {
       const taxRate = 0.08875;
       taxAmount = Math.round(subtotal * taxRate);
     }
