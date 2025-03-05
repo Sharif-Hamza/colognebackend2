@@ -46,7 +46,7 @@ app.get('/', (req, res) => {
 // Create checkout session
 app.post('/create-checkout-session', async (req, res) => {
   try {
-    const { items, userId, email, shippingOption } = req.body;
+    const { items, userId, email, shippingOption, coupon } = req.body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: 'Invalid items data' });
@@ -131,27 +131,72 @@ app.post('/create-checkout-session', async (req, res) => {
     // Calculate subtotal
     const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     
-    // Calculate tax (8.875% for NY)
-    const taxRate = 0.08875;
-    const taxAmount = Math.round(subtotal * taxRate);
+    // Initialize variables for tax and discount
+    let taxAmount = 0;
+    let discountAmount = 0;
+    let couponId = null;
+    let couponCode = null;
+    let skipShipping = false;
     
-    // Create a tax line item
-    const taxLineItem = {
-      price_data: {
-        currency: 'usd',
-        product_data: {
-          name: 'Sales Tax (8.875%)',
-          description: 'NY State and Local Sales Tax',
+    // Apply coupon if provided
+    if (coupon) {
+      couponId = coupon.id;
+      couponCode = coupon.code;
+      
+      // Handle different discount types
+      if (coupon.discount_type === 'fixed') {
+        discountAmount = Math.min(coupon.discount_value, subtotal);
+      } else if (coupon.discount_type === 'percentage') {
+        discountAmount = Math.round((coupon.discount_value / 100) * subtotal);
+      } else if (coupon.discount_type === 'shipping_tax') {
+        // For shipping_tax type, we skip tax and shipping
+        skipShipping = true;
+      }
+    }
+    
+    // Calculate tax (8.875% for NY) if not using a shipping_tax coupon
+    if (!skipShipping) {
+      const taxRate = 0.08875;
+      taxAmount = Math.round(subtotal * taxRate);
+    }
+    
+    // Prepare line items based on coupon type
+    let allLineItems = [...lineItems];
+    
+    // Add tax line item if not using a shipping_tax coupon
+    if (!skipShipping && taxAmount > 0) {
+      const taxLineItem = {
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: 'Sales Tax (8.875%)',
+            description: 'NY State and Local Sales Tax',
+          },
+          unit_amount: taxAmount,
         },
-        unit_amount: taxAmount,
-      },
-      quantity: 1,
-    };
+        quantity: 1,
+      };
+      allLineItems.push(taxLineItem);
+    }
     
-    // Add tax to line items
-    const allLineItems = [...lineItems, taxLineItem];
+    // Add discount line item if applicable
+    if (discountAmount > 0) {
+      const discountLineItem = {
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: `Discount: ${couponCode}`,
+            description: 'Coupon code discount',
+          },
+          unit_amount: -discountAmount, // Negative amount for discount
+        },
+        quantity: 1,
+      };
+      allLineItems.push(discountLineItem);
+    }
     
-    const session = await stripe.checkout.sessions.create({
+    // Create checkout session
+    const sessionParams = {
       customer_email: email,
       payment_method_types: ['card'],
       line_items: allLineItems,
@@ -161,22 +206,30 @@ app.post('/create-checkout-session', async (req, res) => {
       metadata: {
         userId,
         orderId,
-        taxAmount
+        taxAmount,
+        couponId: couponId || '',
+        couponCode: couponCode || '',
+        discountAmount: discountAmount.toString()
       },
-      allow_promotion_codes: true,
       billing_address_collection: 'required',
-      shipping_address_collection: {
-        allowed_countries: ['US']
+      tax_id_collection: {
+        enabled: true,
       },
-      shipping_options: shippingOptions,
       // Disable automatic tax since we're calculating it manually
       automatic_tax: {
         enabled: false,
-      },
-      tax_id_collection: {
-        enabled: true,
       }
-    });
+    };
+    
+    // Only add shipping options and collection if not using a shipping_tax coupon
+    if (!skipShipping) {
+      sessionParams.shipping_options = shippingOptions;
+      sessionParams.shipping_address_collection = {
+        allowed_countries: ['US']
+      };
+    }
+    
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     res.json({ sessionId: session.id });
   } catch (error) {
@@ -248,7 +301,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       // Prepare order items data
       const orderItems = expandedSession.line_items.data
-        .filter(item => item.price.product.metadata.productId) // Filter out tax line item
+        .filter(item => item.price.product.metadata.productId) // Filter out tax and discount line items
         .map(item => {
           // Create the order item with required fields
           const orderItem = {
@@ -269,6 +322,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       const shippingCost = expandedSession.shipping_cost?.amount_total || 0;
       const shippingName = expandedSession.shipping_cost?.shipping_rate?.display_name || 'Standard Shipping';
       const taxAmount = parseInt(session.metadata.taxAmount) || 0;
+      
+      // Extract coupon information
+      const couponId = session.metadata.couponId || null;
+      const couponCode = session.metadata.couponCode || null;
+      const discountAmount = parseInt(session.metadata.discountAmount) || 0;
 
       // Call the database function to process the webhook
       const { error } = await supabase.rpc('process_stripe_webhook', {
@@ -279,12 +337,23 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         items: orderItems,
         shipping_cost: shippingCost,
         shipping_name: shippingName,
-        tax_amount: taxAmount
+        tax_amount: taxAmount,
+        coupon_id: couponId,
+        coupon_code: couponCode,
+        discount_amount: discountAmount
       });
 
       if (error) {
         console.error('Error processing webhook:', error);
         throw error;
+      }
+      
+      // If a coupon was used, update its usage count
+      if (couponId) {
+        await supabase.rpc('update_coupon_usage', {
+          p_coupon_id: couponId,
+          p_user_id: session.metadata.userId
+        });
       }
 
       console.log('Order processed successfully:', {
