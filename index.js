@@ -241,29 +241,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
     try {
-      // Retrieve the session with line items and shipping details
+      // Retrieve the session with line items
       const expandedSession = await stripe.checkout.sessions.retrieve(session.id, {
-        expand: ['line_items.data.price.product', 'shipping_cost', 'total_details', 'customer', 'shipping_details']
+        expand: ['line_items.data.price.product', 'shipping_cost', 'total_details']
       });
-
-      console.log('Expanded session shipping details:', expandedSession.shipping_details);
-
-      // Extract shipping address from session
-      const shippingAddress = expandedSession.shipping_details ? {
-        name: expandedSession.shipping_details.name,
-        address: {
-          line1: expandedSession.shipping_details.address.line1,
-          line2: expandedSession.shipping_details.address.line2 || null,
-          city: expandedSession.shipping_details.address.city,
-          state: expandedSession.shipping_details.address.state,
-          postal_code: expandedSession.shipping_details.address.postal_code,
-          country: expandedSession.shipping_details.address.country,
-        },
-        phone: expandedSession.shipping_details.phone || null
-      } : null;
-
-      // Log shipping address for debugging
-      console.log('Extracted shipping address:', JSON.stringify(shippingAddress, null, 2));
 
       // Prepare order items data
       const orderItems = expandedSession.line_items.data
@@ -289,57 +270,34 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       const shippingName = expandedSession.shipping_cost?.shipping_rate?.display_name || 'Standard Shipping';
       const taxAmount = parseInt(session.metadata.taxAmount) || 0;
 
-      // Insert the order directly instead of using RPC
-      const { data: insertedOrder, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          id: session.metadata.orderId,
-          user_id: session.metadata.userId,
-          stripe_session_id: session.id,
-          status: 'completed',
-          total: session.amount_total,
-          shipping_address: shippingAddress,
-          shipping_cost: shippingCost,
-          shipping_name: shippingName,
-          tax_amount: taxAmount,
-          customer: {
-            name: expandedSession.customer?.name || expandedSession.customer_details?.name || 'N/A',
-            email: expandedSession.customer?.email || expandedSession.customer_details?.email || 'N/A'
-          },
-          created_at: new Date(),
-          updated_at: new Date()
-        })
-        .select('id')
-        .single();
+      // Call the database function to process the webhook
+      const { error } = await supabase.rpc('process_stripe_webhook', {
+        session_id: session.id,
+        user_id: session.metadata.userId,
+        order_id: session.metadata.orderId,
+        total: session.amount_total,
+        items: orderItems,
+        shipping_cost: shippingCost,
+        shipping_name: shippingName,
+        tax_amount: taxAmount
+      });
 
-      if (orderError) {
-        console.error('Error inserting order:', orderError);
-        return res.status(500).json({ error: 'Failed to insert order' });
+      if (error) {
+        console.error('Error processing webhook:', error);
+        throw error;
       }
 
-      // Insert order items
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(
-          orderItems.map(item => ({
-            order_id: session.metadata.orderId,
-            ...item
-          }))
-        );
-
-      if (itemsError) {
-        console.error('Error inserting order items:', itemsError);
-        // Continue despite the error, as the order is already created
-      }
-
-      res.json({ received: true });
+      console.log('Order processed successfully:', {
+        orderId: session.metadata.orderId,
+        sessionId: session.id
+      });
     } catch (error) {
-      console.error('Error processing webhook:', error);
-      res.status(500).json({ error: 'Failed to process webhook' });
+      console.error('Error processing successful payment:', error);
+      return res.status(500).json({ message: 'Error processing payment success' });
     }
-  } else {
-    res.json({ received: true });
   }
+
+  res.json({ received: true });
 });
 
 const port = process.env.PORT || 10000;
