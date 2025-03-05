@@ -52,22 +52,31 @@ app.post('/create-checkout-session', async (req, res) => {
       return res.status(400).json({ message: 'Invalid items data' });
     }
 
-    const lineItems = items.map(item => ({
-      price_data: {
-        currency: 'usd',
-        product_data: {
-          name: item.name,
-          description: item.description,
-          images: [item.image_url],
-          metadata: {
-            productId: item.id,
-            image_url: item.image_url
-          }
+    const lineItems = items.map(item => {
+      // Create the product data object
+      const productData = {
+        name: item.name,
+        description: item.description,
+        metadata: {
+          productId: item.id
+        }
+      };
+      
+      // Only add images if image_url exists and is not empty
+      if (item.image_url && item.image_url.trim() !== '') {
+        productData.images = [item.image_url];
+        productData.metadata.image_url = item.image_url;
+      }
+      
+      return {
+        price_data: {
+          currency: 'usd',
+          product_data: productData,
+          unit_amount: item.price,
         },
-        unit_amount: item.price,
-      },
-      quantity: item.quantity,
-    }));
+        quantity: item.quantity,
+      };
+    });
 
     // Generate a UUID for the order
     const orderId = randomUUID();
@@ -232,20 +241,43 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
     try {
-      // Retrieve the session with line items
+      // Retrieve the session with line items and shipping details
       const expandedSession = await stripe.checkout.sessions.retrieve(session.id, {
-        expand: ['line_items.data.price.product', 'shipping_cost', 'total_details']
+        expand: ['line_items.data.price.product', 'shipping_cost', 'total_details', 'shipping_details']
       });
+
+      // Extract shipping address from session
+      const shippingAddress = expandedSession.shipping_details ? {
+        name: expandedSession.shipping_details.name,
+        address: {
+          line1: expandedSession.shipping_details.address.line1,
+          line2: expandedSession.shipping_details.address.line2,
+          city: expandedSession.shipping_details.address.city,
+          state: expandedSession.shipping_details.address.state,
+          postal_code: expandedSession.shipping_details.address.postal_code,
+          country: expandedSession.shipping_details.address.country,
+        },
+        phone: expandedSession.shipping_details.phone || null
+      } : null;
 
       // Prepare order items data
       const orderItems = expandedSession.line_items.data
         .filter(item => item.price.product.metadata.productId) // Filter out tax line item
-        .map(item => ({
-          product_id: item.price.product.metadata.productId,
-          quantity: item.quantity,
-          price_at_time: item.price.unit_amount,
-          image_url: item.price.product.metadata.image_url
-        }));
+        .map(item => {
+          // Create the order item with required fields
+          const orderItem = {
+            product_id: item.price.product.metadata.productId,
+            quantity: item.quantity,
+            price_at_time: item.price.unit_amount
+          };
+          
+          // Only add image_url if it exists in metadata
+          if (item.price.product.metadata.image_url) {
+            orderItem.image_url = item.price.product.metadata.image_url;
+          }
+          
+          return orderItem;
+        });
 
       // Extract shipping and tax information
       const shippingCost = expandedSession.shipping_cost?.amount_total || 0;
@@ -261,7 +293,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         items: orderItems,
         shipping_cost: shippingCost,
         shipping_name: shippingName,
-        tax_amount: taxAmount
+        tax_amount: taxAmount,
+        shipping_address: shippingAddress
       });
 
       if (error) {
