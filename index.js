@@ -299,6 +299,9 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
           status: 'completed',
           total: session.amount_total,
           shipping_address: shippingAddress,
+          shipping_cost: shippingCost,
+          shipping_name: shippingName,
+          tax_amount: taxAmount,
           customer: {
             name: expandedSession.customer?.name || expandedSession.customer_details?.name || 'N/A',
             email: expandedSession.customer?.email || expandedSession.customer_details?.email || 'N/A'
